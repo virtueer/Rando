@@ -88,13 +88,25 @@ describe('tdd socket tests', () => {
   }))
 
   test("should match someone", asyncWithDone(async done => {
+    const message = 'hello world'
     const index = Math.floor(Math.random() * (clients.length - 1));
+    const mockFunc = jest.fn()
     let times = 0
-    clients.forEach(c => c.on('matched', () => {
-      console.log('matched', c.id)
-      if (++times === 2)
-        done()
-    }))
+    clients.forEach(c => {
+      c.on('matched', (room) => {
+        c.emit('message', { room, message })
+      })
+
+      c.on('message', message => {
+        mockFunc(message)
+        if (++times === 2) {
+          expect(mockFunc.mock.calls.length).toBe(2)
+          console.log(mockFunc.mock.calls)
+          expect(mockFunc.mock.calls).toEqual([[message], [message]])
+          done()
+        }
+      })
+    })
     const client = clients[index]
     client.emit('match')
   }))

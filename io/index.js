@@ -31,8 +31,9 @@ function configure(io) {
       targetSocket.join(room)
       socket.join(room)
 
-      io.to(room).emit('matched')
+      io.to(room).emit('matched', room)
     })
+
   })
 
   server = io

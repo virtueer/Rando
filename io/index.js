@@ -34,6 +34,9 @@ function configure(io) {
       io.to(room).emit('matched', room)
     })
 
+    socket.on('message', ({ room, message }) => {
+      socket.to(room).emit('message', message)
+    })
   })
 
   server = io

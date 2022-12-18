@@ -1,5 +1,5 @@
-const matchService = require('./match')
+const socketService = require('./socket')
 
 module.exports = {
-  matchService
+  socketService
 }

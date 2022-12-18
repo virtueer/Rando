@@ -89,13 +89,13 @@ describe('tdd socket tests', () => {
 
   test("should match someone", asyncWithDone(async done => {
     const index = Math.floor(Math.random() * (clients.length - 1));
+    let times = 0
+    clients.forEach(c => c.on('matched', () => {
+      console.log('matched', c.id)
+      if (++times === 2)
+        done()
+    }))
     const client = clients[index]
-    client.on('matched', id => {
-      const ids = clients.map(x => x.id)
-      expect(ids.includes(id)).toBe(true)
-      done()
-    })
-
     client.emit('match')
   }))
 })

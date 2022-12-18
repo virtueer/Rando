@@ -1,4 +1,5 @@
 const { Server } = require('socket.io')
+const { nanoid } = require('nanoid')
 let server = undefined
 
 const emitLength = async (io) => {
@@ -21,6 +22,17 @@ function configure(io) {
       socket.emit('getLength', sockets.length)
     })
 
+    socket.on('match', async () => {
+      const room = nanoid(21)
+      const sockets = await io.fetchSockets()
+      const otherSockets = sockets.filter(x => x.id !== socket.id)
+      const index = Math.floor(Math.random() * (otherSockets.length - 1));
+      const targetSocket = otherSockets[index]
+      targetSocket.join(room)
+      socket.join(room)
+
+      io.to(room).emit('matched')
+    })
   })
 
   server = io

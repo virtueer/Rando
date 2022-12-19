@@ -13,18 +13,19 @@ const asyncWithDone = (f) => {
 /**
  * 
  * @param {*} clients 
- * @returns {Promise<Client.Manager>}
+ * @returns {Client.Manager}
  */
 function addClient(clients) {
-  return new Promise((resolve, reject) => {
-    /** @type {Client.Manager} */
-    const client = new Client('http://localhost:3000');
 
-    client.on('connect', () => {
-      clients.push(client)
-      resolve(client)
-    })
+  /** @type {Client.Manager} */
+  const client = new Client('http://localhost:3000');
+
+  client.waitForConnect = () => new Promise((resolve, reject) => {
+    client.on('connect', resolve)
   })
+
+  clients.push(client)
+  return client
 }
 
 describe('tdd socket tests', () => {
@@ -41,7 +42,7 @@ describe('tdd socket tests', () => {
     clients.forEach(c => c.close())
   });
 
-  describe("length and message arriving tests", () => {
+  describe("length tests", () => {
     afterEach(() => {
       clients.forEach(c => c.off())
     })
@@ -53,7 +54,8 @@ describe('tdd socket tests', () => {
 
 
     test("should return length 1", asyncWithDone(async done => {
-      const client = await addClient(clients)
+      const client = addClient(clients)
+      await client.waitForConnect()
 
       client.on('getLength', length => {
         expect(length).toBe(1)
@@ -64,10 +66,12 @@ describe('tdd socket tests', () => {
       client.emit('getLength')
     }));
 
-    test("should return length 2", asyncWithDone(async done => {
-      const client = await addClient(clients)
+    test("should return length 0", asyncWithDone(async done => {
+      const client = addClient(clients)
+      await client.waitForConnect()
+
       client.on('getLength', length => {
-        expect(length).toBe(2)
+        expect(length).toBe(0)
         expect(clients.length).toBe(2)
         done()
       })
@@ -77,80 +81,108 @@ describe('tdd socket tests', () => {
 
     test("should update length realtime for one client", asyncWithDone(async done => {
       const client = addClient(clients)
+
       clients[0].on('length', async length => {
-        expect(length).toBe(3)
-        await client // without this following expect fails
+        expect(length).toBe(1)
         expect(clients.length).toBe(3)
+        await client.waitForConnect() // for next test
         done()
       })
+
     }))
 
     test("should update length realtime for all clients", asyncWithDone(async done => {
       const times = jest.fn()
-      clients.forEach(c => c.on('length', times))
-      await addClient(clients)
-      expect(times).toHaveBeenCalledTimes(3)
+      clients.forEach(c => {
+        c.on('length', times)
+      })
+      const client = addClient(clients)
+      client.on('length', times)
+      await client.waitForConnect()
+      expect(times).toHaveBeenCalledTimes(4)
       done()
     }))
+  })
 
-    test("should match someone", asyncWithDone(async done => {
-      const message = 'hello world'
-      const index = Math.floor(Math.random() * (clients.length - 1));
-      const mockFunc = jest.fn()
-      let times = 0
-      clients.forEach(c => {
-        c.on('matched', (room) => {
-          c.emit('message', { room, message })
-        })
+  describe("matching and message arriving tests", () => {
+    const rooms = new Map()
 
-        c.on('message', message => {
-          mockFunc(message)
-          if (++times === 2) {
-            expect(mockFunc.mock.calls.length).toBe(2)
-            expect(mockFunc.mock.calls).toEqual([[message], [message]])
+    test('should match', asyncWithDone(async done => {
+      const _clients = [addClient(clients), addClient(clients)]
+      const times = []
+
+      _clients.forEach(c => {
+        c.on('matched', room => {
+          times.push(room)
+          if (times.length === 2) {
+            expect(times[0]).toBe(times[1])
             done()
           }
         })
       })
-      const client = clients[index]
-      client.emit('match')
     }))
-  })
 
+    test("should generate 2 rooms and length must be 1", asyncWithDone(async done => {
+      const users = [addClient(clients), addClient(clients), addClient(clients), addClient(clients), addClient(clients)]
 
-  describe("matching tests", () => {
-    test("should return length 4", asyncWithDone(async done => {
-      const client = await addClient(clients)
-      await addClient(clients)
-      await addClient(clients)
-      await addClient(clients)
+      for (let i = 0; i < users.length; i++) {
+        const user = await users[i];
 
-      client.on('getLength', length => {
-        expect(length).toBe(4)
-        expect(clients.length).toBe(4)
-        done()
-      })
+        user.on('matched', room => {
+          const newArray = [rooms.get(room)]
+          newArray.push(user)
+          rooms.set(room, newArray.filter(x => x !== undefined).flat())
+          if (rooms.size === 2)
+            user.emit('getLength')
+        })
 
-      client.emit('getLength')
+        user.on('getLength', l => {
+          expect(l).toBe(1)
+          done()
+        })
+      }
     }));
 
-    test('should length exclude matched sockets', asyncWithDone(async done => {
-      const [client1, client2, client3, client4] = clients
+    test('should leave room', asyncWithDone(async done => {
+      const room = rooms.keys().next().value
+      const users = rooms.get(room)
+      let times = 0;
 
-      [client1, clien2].forEach(c => {
-        c.on('matched', () => {
-          client3.emit('getLength', l => {
-            expect(l).toBe(2)
-          })
+      const isDone = () => {
+        if (times !== 2)
+          return
 
-          client4.emit('getLength', l => {
-            expect(l).toBe(2)
-          })
-        })
+        rooms.delete(room)
+        done()
+      }
+
+      users[0].on('leave room', () => {
+        times++
+        isDone()
+      })
+      users[1].on('leave room', () => {
+        times++
+        isDone()
       })
 
-      client1.emit('match')
-      client2.emit('match')
+      users[0].emit('leave room')
+    }))
+
+    test('should arrive message', asyncWithDone(async done => {
+      const room = rooms.keys().next().value
+      const users = rooms.get(room)
+      const message = 'hello world'
+      let arrived = 0
+
+      users.map(user => {
+        user.on('message', m => {
+          expect(m).toBe(message)
+          if (++arrived === 2)
+            done()
+        })
+
+        user.emit('message', message)
+      })
     }))
   })
 })
